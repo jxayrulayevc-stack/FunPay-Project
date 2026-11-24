@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#f2f4f8"/>
+  <rect x="24" y="24" width="592" height="312" rx="16" fill="#ffffff" stroke="#d7dce5" stroke-width="2"/>
+  <text x="48" y="70" font-family="sans-serif" font-size="22" fill="#2b3445">🟢 FunPay Helper Bot — /status</text>
+  <text x="48" y="116" font-family="sans-serif" font-size="17" fill="#4a5568">Сессия FunPay: ✅ активна</text>
+  <text x="48" y="148" font-family="sans-serif" font-size="17" fill="#4a5568">Аккаунт: SELLER • Категорий: 3</text>
+  <text x="48" y="180" font-family="sans-serif" font-size="17" fill="#4a5568">Автоответ: вкл, интервал 6 ч</text>
+  <text x="48" y="212" font-family="sans-serif" font-size="17" fill="#4a5568">Автоподнятие: вкл</text>
+  <text x="48" y="244" font-family="sans-serif" font-size="17" fill="#4a5568">Следующее поднятие: через 3 ч 42 мин</text>
+  <text x="48" y="276" font-family="sans-serif" font-size="17" fill="#4a5568">Heartbeat: 12 с назад • Watchdog: 8 с</text>
+  <text x="48" y="318" font-family="sans-serif" font-size="14" fill="#98a2b3">Заглушка: замените на реальный скриншот бота</text>
+</svg>

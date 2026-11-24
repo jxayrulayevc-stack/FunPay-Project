@@ -1,0 +1,34 @@
+# Секреты и локальные настройки
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+cookies*.txt
+cookies*.json
+token*.txt
+
+# База данных и бэкапы
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+backups/
+data/
+
+# Логи и временные файлы
+logs/
+*.log
+
+# Окружения Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# Системные
+.DS_Store

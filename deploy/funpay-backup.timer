@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily backup of FunPay Helper database
+
+[Timer]
+OnCalendar=daily
+AccuracySec=1h
+Persistent=true
+Unit=funpay-backup.service
+
+[Install]
+WantedBy=timers.target

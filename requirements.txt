@@ -1,0 +1,7 @@
+# Зафиксированные версии для Python 3.11+ (проверено на 3.11–3.14).
+aiogram==3.34.0
+pydantic==2.14.4
+aiosqlite==0.22.1
+httpx==0.28.1
+beautifulsoup4==4.15.0
+python-dotenv==1.2.4

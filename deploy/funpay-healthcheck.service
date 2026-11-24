@@ -1,0 +1,11 @@
+[Unit]
+Description=FunPay Helper heartbeat check
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=funpay
+Group=funpay
+WorkingDirectory=/opt/funpay-helper
+EnvironmentFile=/opt/funpay-helper/.env
+ExecStart=/opt/funpay-helper/venv/bin/python /opt/funpay-helper/healthcheck.py

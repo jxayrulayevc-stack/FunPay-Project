@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup FunPay Helper SQLite database
+
+[Service]
+Type=oneshot
+User=funpay
+Group=funpay
+WorkingDirectory=/opt/funpay-helper
+EnvironmentFile=/opt/funpay-helper/.env
+ExecStart=/bin/bash /opt/funpay-helper/deploy/backup.sh

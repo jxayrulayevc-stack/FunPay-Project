@@ -1,0 +1,30 @@
+[Unit]
+Description=FunPay Helper Bot (Telegram + FunPay)
+Documentation=https://github.com/yourname/funpay-helper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=funpay
+Group=funpay
+WorkingDirectory=/opt/funpay-helper
+EnvironmentFile=/opt/funpay-helper/.env
+ExecStart=/opt/funpay-helper/venv/bin/python /opt/funpay-helper/main.py
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Песочница: пользователь funpay без sudo, запись только в свои каталоги.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/funpay-helper/data /opt/funpay-helper/logs /opt/funpay-helper/backups
+
+# Мягкий лимит памяти для VM на 1 ГБ (жёсткий MemoryMax лучше не ставить).
+MemoryHigh=280M
+
+[Install]
+WantedBy=multi-user.target

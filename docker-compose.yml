@@ -1,0 +1,19 @@
+# Опциональный запуск в Docker. Секреты лежат в .env (не коммитится).
+services:
+  funpay-helper:
+    build: .
+    image: funpay-helper:local
+    container_name: funpay-helper
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    mem_limit: 320m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "5"
