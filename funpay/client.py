@@ -138,9 +138,25 @@ class FunPayClient:
         self._auth_event.set()
 
     async def wait_authorized(self, stop_event: asyncio.Event) -> bool:
-        """Ждёт валидных куков. Возвращает True, если запрошен stop."""
+        """Ждёт валидных куков. Возвращает True, если запрошен stop.
+
+        Ожидание прерывается и остановкой, и появлением новых куков:
+        /cookie должен возобновить работу без перезапуска цикла.
+        """
         while self.unauthorized and not stop_event.is_set():
-            if await asyncio.wait_for(stop_event.wait(), timeout=5.0):
+            stop_task = asyncio.create_task(stop_event.wait())
+            auth_task = asyncio.create_task(self._auth_event.wait())
+            await asyncio.wait(
+                (stop_task, auth_task),
+                timeout=5.0,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            stopped = stop_task.done()
+            for task in (stop_task, auth_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(stop_task, auth_task, return_exceptions=True)
+            if stopped:
                 return True
         return stop_event.is_set()
 
