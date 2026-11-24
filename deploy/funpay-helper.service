@@ -1,6 +1,6 @@
 [Unit]
 Description=FunPay Helper Bot (Telegram + FunPay)
-Documentation=https://github.com/yourname/funpay-helper
+Documentation=https://github.com/jxayrulayevc-stack/FunPay-Project
 After=network-online.target
 Wants=network-online.target
 
