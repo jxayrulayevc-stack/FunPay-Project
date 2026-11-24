@@ -13,8 +13,9 @@ die() { printf '\n[ERROR] %s\n' "$*" >&2; exit 1; }
 [[ -d "$APP_DIR/.git" ]] || die "В $APP_DIR нет git-репозитория"
 
 log "1/4 Получение обновлений"
-git -C "$APP_DIR" fetch --all --tags
-git -C "$APP_DIR" pull --ff-only
+# Git запускается от владельца каталога, иначе срабатывает защита "dubious ownership".
+sudo -u "$SERVICE_USER" git -C "$APP_DIR" fetch --all --tags
+sudo -u "$SERVICE_USER" git -C "$APP_DIR" pull --ff-only
 
 log "2/4 Зависимости"
 sudo -u "$SERVICE_USER" "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"

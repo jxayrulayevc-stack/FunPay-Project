@@ -33,10 +33,13 @@ log "3/9 Сервисный пользователь $SERVICE_USER"
 id -u "$SERVICE_USER" >/dev/null 2>&1 || useradd -r -m -d "$APP_DIR" -s /usr/sbin/nologin "$SERVICE_USER"
 
 log "4/9 Код проекта"
+chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" 2>/dev/null || true
 if [[ -d "$APP_DIR/.git" ]]; then
-  git -C "$APP_DIR" pull --ff-only
+  # Git запускается от владельца каталога, иначе срабатывает защита "dubious ownership".
+  sudo -u "$SERVICE_USER" git -C "$APP_DIR" pull --ff-only || \
+    echo "Внимание: не удалось обновить git — используем локальную копию"
 elif [[ -n "$REPO_URL" ]]; then
-  git clone "$REPO_URL" "$APP_DIR"
+  sudo -u "$SERVICE_USER" git clone "$REPO_URL" "$APP_DIR"
 else
   die "Укажите URL репозитория: sudo bash deploy/install.sh https://github.com/USER/funpay-helper.git"
 fi
