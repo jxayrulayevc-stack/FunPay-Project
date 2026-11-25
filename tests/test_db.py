@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from pathlib import Path
 
@@ -55,4 +56,33 @@ async def test_heartbeat_and_raise_state(tmp_path: Path) -> None:
     await db.set_raise_state(1, "Game", now, now + 14400, None, 0)
     assert await db.get_next_raise_at() == now + 14400
     assert (await db.get_raise_state(1))["name"] == "Game"
+    await db.close()
+
+
+async def test_migration_keeps_secrets_and_settings(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    old.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    old.execute(
+        "CREATE TABLE raise_state (category_id TEXT PRIMARY KEY, name TEXT, "
+        "last_raise_at REAL, next_raise_at REAL, last_error TEXT, "
+        "error_count INTEGER NOT NULL DEFAULT 0)"
+    )
+    old.execute("INSERT INTO settings(key, value) VALUES ('golden_key', 'demo-cookie')")
+    old.execute(
+        "INSERT INTO raise_state(category_id, name, next_raise_at, error_count) "
+        "VALUES ('163', 'Drakensang Online', 123.0, 4)"
+    )
+    old.commit()
+    old.close()
+
+    db = Database(path)
+    await db.connect()
+    assert await db.get_setting("golden_key") == "demo-cookie"
+    old_state = await db.get_raise_state(163)
+    assert old_state is not None and old_state["node_ids"] == ""
+    await db.set_raise_state(333, "Counter-Strike 2", None, 200.0, None, 0, (1350,))
+    new_state = await db.get_raise_state(333)
+    assert new_state is not None and new_state["node_ids"] == "1350"
     await db.close()

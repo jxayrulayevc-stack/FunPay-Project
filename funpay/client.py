@@ -11,6 +11,7 @@ import json
 import random
 import re
 import time
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -26,10 +27,12 @@ from funpay.errors import (
     RateLimitError,
     UnauthorizedError,
 )
-from funpay.models import AccountInfo, Category, ChatMessage, Order, RaiseResult
+from funpay.models import AccountInfo, Category, ChatMessage, MyLotCategory, Order, RaiseResult
 from funpay.parsing import (
+    index_categories_by_node,
     parse_app_data,
     parse_chat_history,
+    parse_profile_lots,
     parse_raise_response,
     parse_sales_page,
 )
@@ -42,6 +45,7 @@ RUNNER_HEADERS = {
     "x-requested-with": "XMLHttpRequest",
 }
 MAX_ATTEMPTS = 8
+BACKOFF_SECONDS = (2, 5, 10, 30, 60)
 _MESSAGE_ID_RE = re.compile(r'id="message-(\d+)"')
 
 
@@ -72,6 +76,9 @@ class FunPayClient:
         self._last_success_at = 0.0
         self._last_runner_at = 0.0
         self._consecutive_failures = 0
+        # Глобальный лимитер: все запросы к FunPay стартуют не чаще, чем раз в 2–3 с.
+        self._rate_lock = asyncio.Lock()
+        self._next_request_at = 0.0
 
     # --- свойства для /status ------------------------------------------------
 
@@ -168,6 +175,23 @@ class FunPayClient:
         location = response.headers.get("location", "")
         return bool(location) and ("account/login" in location or "logout" in location)
 
+    async def _throttle(self) -> None:
+        """Выдерживает глобальную паузу между запросами с небольшим джиттером."""
+        async with self._rate_lock:
+            now = time.monotonic()
+            interval = self._settings.funpay_request_delay + random.uniform(-0.2, 0.5)
+            slot = max(now, self._next_request_at)
+            self._next_request_at = slot + interval
+        delay = slot - now
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    @staticmethod
+    def _backoff_delay(attempt: int) -> float:
+        """Задержки 2, 5, 10, 30, 60 с для повторов 429/5xx/сети."""
+        index = min(max(attempt - 1, 0), len(BACKOFF_SECONDS) - 1)
+        return float(BACKOFF_SECONDS[index]) + random.uniform(0, 1.5)
+
     async def _request(
         self,
         method: str,
@@ -185,6 +209,7 @@ class FunPayClient:
         last_error: Exception | None = None
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
+            await self._throttle()
             try:
                 response = await http_client.request(
                     method, url, data=data, params=params, headers=headers, cookies=cookies
@@ -192,7 +217,7 @@ class FunPayClient:
             except httpx.RequestError as exc:
                 last_error = exc
                 self._consecutive_failures += 1
-                delay = min(2**attempt, 60) + random.uniform(0, 1.5)
+                delay = self._backoff_delay(attempt)
                 self._logger.warning(
                     "Сеть: ошибка запроса к FunPay (попытка %s/%s, пауза %s с): %s",
                     attempt,
@@ -216,7 +241,7 @@ class FunPayClient:
                     delay = min(float(retry_after), 120.0) if retry_after else 0.0
                 except ValueError:
                     delay = 0.0
-                delay = delay or min(2**attempt, 60) + random.uniform(0, 1.5)
+                delay = delay or self._backoff_delay(attempt)
                 self._logger.warning(
                     "FunPay: 429, попытка %s/%s, пауза %s с", attempt, MAX_ATTEMPTS, round(delay, 1)
                 )
@@ -226,7 +251,7 @@ class FunPayClient:
             if response.status_code >= 500:
                 last_error = NetworkError(f"FunPay вернул HTTP {response.status_code}")
                 self._consecutive_failures += 1
-                delay = min(2**attempt, 60) + random.uniform(0, 1.5)
+                delay = self._backoff_delay(attempt)
                 self._logger.warning(
                     "FunPay: HTTP %s, попытка %s/%s, пауза %s с",
                     response.status_code,
@@ -404,15 +429,37 @@ class FunPayClient:
             raise UnauthorizedError("Страница продаж не содержит данных аккаунта")
         return parse_sales_page(response.text, self_id=self.user_id)
 
-    async def raise_category(self, category: Category) -> RaiseResult:
-        """Поднимает все подкатегории категории; возвращает время следующей попытки."""
+    async def get_my_lot_categories(self) -> list[MyLotCategory]:
+        """Загружает свой профиль и возвращает только категории с активными лотами."""
+        if not self._golden_key or not self.user_id:
+            if not self.categories:
+                await self.refresh_session()
+            if not self._golden_key or not self.user_id:
+                self._mark_unauthorized()
+                raise UnauthorizedError("Куки не заданы")
+        if self.unauthorized:
+            raise UnauthorizedError("Нет авторизации на FunPay")
+        if not self.categories:
+            await self.refresh_session()
+        response = await self._request("GET", f"/users/{self.user_id}/")
+        if "user-link-name" not in response.text:
+            self._mark_unauthorized()
+            raise UnauthorizedError("Профиль FunPay не содержит данных аккаунта")
+        games_by_node = index_categories_by_node(self.categories)
+        categories = parse_profile_lots(response.text, games_by_node=games_by_node)
+        self._logger.debug("Профиль FunPay: подкатегорий с активными лотами: %s", len(categories))
+        return categories
+
+    async def raise_game(self, game_id: int, game_name: str, node_ids: Sequence[int]) -> RaiseResult:
+        """Поднимает лоты одной игры, передавая только мои node_id."""
         now = time.time()
-        if not category.subcategory_ids:
-            raise RaiseError("У категории нет подкатегорий")
+        nodes = tuple(sorted(set(int(node_id) for node_id in node_ids)))
+        if not nodes:
+            raise RaiseError("У игры нет подкатегорий с моими лотами")
         payload: dict[str, Any] = {
-            "game_id": category.id,
-            "node_id": category.subcategory_ids[0],
-            "node_ids[]": list(category.subcategory_ids),
+            "game_id": game_id,
+            "node_id": nodes[0],
+            "node_ids[]": list(nodes),
         }
         response = await self._request(
             "POST",
@@ -426,13 +473,25 @@ class FunPayClient:
             raise ParseError("lots/raise вернул не JSON") from exc
         parsed = parse_raise_response(
             result,
-            category_id=category.id,
+            category_id=game_id,
             now=now,
             fallback_wait_seconds=int(self._settings.account_refresh_minutes * 60),
+        )
+        self._logger.debug(
+            "Ответ FunPay lots/raise (%s %s): ok=%s, wait=%s, msg=%s",
+            game_id,
+            game_name,
+            parsed.ok,
+            parsed.wait_seconds,
+            parsed.message[:120],
         )
         if not parsed.ok:
             raise RaiseError(parsed.message, parsed.wait_seconds)
         return parsed
+
+    async def raise_category(self, category: Category) -> RaiseResult:
+        """Обратная совместимость: поднимает категорию из всех её подкатегорий."""
+        return await self.raise_game(category.id, category.name, category.subcategory_ids)
 
 
 __all__ = ["FunPayClient"]

@@ -18,3 +18,5 @@ class SettingsStates(StatesGroup):
     wait_autoreply_text = State()
     wait_autoreply_interval = State()
     wait_order_text = State()
+    wait_raise_exclude_id = State()
+    wait_raise_include_id = State()

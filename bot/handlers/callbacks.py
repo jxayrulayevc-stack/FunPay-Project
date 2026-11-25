@@ -10,7 +10,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
 
 from bot.context import BotContext
-from bot.handlers.commands import autoreply_menu_text, raise_menu_text, status_text
+from bot.handlers.commands import autoreply_menu_text, raise_list_text, raise_menu_text, status_text
 from bot.handlers.router import router
 from bot.keyboards import MenuAction, main_menu
 from bot.states import SecretStates, SettingsStates
@@ -104,6 +104,37 @@ async def handle_menu(
     if action == "raise_now":
         await callback.answer("Поднимаю лоты, отчёт придёт отдельным сообщением")
         await context.raiser.raise_all(report=True)
+        return
+
+    if action == "raise_list":
+        await callback.answer()
+        await _edit(callback, await raise_list_text(context))
+        return
+
+    if action == "raise_refresh":
+        await callback.answer("Обновляю список лотов")
+        try:
+            categories = await context.raiser.refresh_lots(notify=False)
+        except Exception as exc:  # noqa: BLE001 - показываем причину админу
+            await _edit(callback, f"❌ Не удалось обновить лоты: {html.escape(str(exc))}")
+            return
+        await _edit(
+            callback,
+            f"✅ Лоты обновлены: {len({item.game_id for item in categories})} игр, "
+            f"{sum(item.lot_count for item in categories)} лотов.",
+        )
+        return
+
+    if action == "raise_exclude":
+        await state.set_state(SettingsStates.wait_raise_exclude_id)
+        await callback.answer()
+        await _edit(callback, "Пришлите ID из /raise_list, который нужно исключить.")
+        return
+
+    if action == "raise_include":
+        await state.set_state(SettingsStates.wait_raise_include_id)
+        await callback.answer()
+        await _edit(callback, "Пришлите ID исключённой категории, которую нужно вернуть.")
         return
 
     if action == "raise_toggle":

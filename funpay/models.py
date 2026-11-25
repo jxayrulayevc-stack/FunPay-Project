@@ -15,6 +15,28 @@ class Category:
 
 
 @dataclass(frozen=True, slots=True)
+class MyLotCategory:
+    """Подкатегория продавца, в которой есть активные лоты."""
+
+    game_id: int
+    game_name: str
+    node_id: int
+    node_name: str
+    lot_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class RaiseTarget:
+    """Игра для поднятия: один POST на game_id со всеми моими node_id."""
+
+    game_id: int
+    game_name: str
+    node_ids: tuple[int, ...]
+    node_names: tuple[str, ...]
+    lot_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class AccountInfo:
     """Данные авторизованного аккаунта, полученные с главной страницы."""
 

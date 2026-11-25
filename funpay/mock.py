@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Sequence
 from typing import Any
 
-from funpay.models import AccountInfo, Category, ChatMessage, Order, RaiseResult
+from funpay.models import AccountInfo, Category, ChatMessage, MyLotCategory, Order, RaiseResult
 from funpay.parsing import random_tag
 
 DEMO_NODE = "users-1-999"
@@ -130,16 +131,30 @@ class MockFunPayClient:
             )
         ]
 
-    async def raise_category(self, category: Category) -> RaiseResult:
+    async def get_my_lot_categories(self) -> list[MyLotCategory]:
+        """Демо-список категорий с лотами (реальный FunPay не трогается)."""
+        return [
+            MyLotCategory(1, "Демо-игра (dry-run)", 101, "Демо-подкатегория", 2),
+        ]
+
+    async def raise_game(self, game_id: int, game_name: str, node_ids: Sequence[int]) -> RaiseResult:
         now = time.time()
-        self._logger.info("DRY-RUN: поднятие категории %s НЕ выполнено", category.id)
+        self._logger.info(
+            "DRY-RUN: поднятие %s (%s), node_id=%s НЕ выполнено",
+            game_id,
+            game_name,
+            list(node_ids),
+        )
         return RaiseResult(
-            category_id=category.id,
+            category_id=game_id,
             ok=True,
             wait_seconds=DEFAULT_WAIT_SECONDS,
             next_attempt_at=now + DEFAULT_WAIT_SECONDS,
             message="Демо-поднятие (dry-run)",
         )
+
+    async def raise_category(self, category: Category) -> RaiseResult:
+        return await self.raise_game(category.id, category.name, category.subcategory_ids)
 
 
 __all__ = ["MockFunPayClient"]

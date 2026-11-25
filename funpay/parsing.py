@@ -10,18 +10,19 @@ import random
 import re
 import string
 import unicodedata
+from collections.abc import Mapping
 from typing import Any
 
 from bs4 import BeautifulSoup
 
 from funpay.errors import ParseError
-from funpay.models import AccountInfo, Category, ChatContact, ChatMessage, Order, RaiseResult
+from funpay.models import AccountInfo, Category, ChatContact, ChatMessage, MyLotCategory, Order, RaiseResult
 
 DEFAULT_WAIT_SECONDS = 7200
 
-_HOURS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(часов|часа|час|hours?|годин|години|h)\b", re.IGNORECASE)
-_MINUTES_RE = re.compile(r"(\d+)\s*(минут[а-я]*|minutes?|хвилин[а-я]*|min|m)\b", re.IGNORECASE)
-_SECONDS_RE = re.compile(r"(\d+)\s*(секунд[а-я]*|seconds?|секунд|sec|s)\b", re.IGNORECASE)
+_HOURS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(часов|часа|час|hours?|годин|години|h|ч)\b", re.IGNORECASE)
+_MINUTES_RE = re.compile(r"(\d+)\s*(минут[а-я]*|minutes?|хвилин[а-я]*|min|m|мин)\b", re.IGNORECASE)
+_SECONDS_RE = re.compile(r"(\d+)\s*(секунд[а-я]*|seconds?|секунд|sec|s|сек)\b", re.IGNORECASE)
 _WAIT_WORDS_RE = re.compile(r"подождите|please\s+wait|зачекайте", re.IGNORECASE)
 
 
@@ -37,6 +38,11 @@ def strip_invisible_suffix(text: str) -> str:
     while end > 0 and (text[end - 1].isspace() or unicodedata.category(text[end - 1]) == "Cf"):
         end -= 1
     return text[:end]
+
+
+def is_wait_message(message: str) -> bool:
+    """True, если FunPay просит подождать («Подождите N минут»)."""
+    return bool(message and _WAIT_WORDS_RE.search(message))
 
 
 def parse_wait_time(message: str) -> int:
@@ -167,6 +173,49 @@ def parse_categories(html: str) -> list[Category]:
             subcategory_ids.add(game_id)
         result.append(Category(game_id, name, tuple(sorted(subcategory_ids))))
     return result
+
+
+def index_categories_by_node(categories: tuple[Category, ...] | list[Category]) -> dict[int, Category]:
+    """Строит карту node_id → игра на основе категорий главной страницы."""
+    return {node_id: category for category in categories for node_id in category.subcategory_ids}
+
+
+def parse_profile_lots(html: str, *, games_by_node: Mapping[int, Category]) -> list[MyLotCategory]:
+    """Достаёт из своего профиля только подкатегории с активными лотами.
+
+    FunPayAPI 1.1.0 ищет `offer-list-title-container` → `h3 > a[href=/lots/<id>/]`
+    и считает `a.tc-item` внутри родительского контейнера. Валюта (`/chips/`)
+    для поднятия не используется — как и в `raise_lots()` библиотеки.
+    """
+    soup = _soup(html)
+    found: dict[tuple[int, int], MyLotCategory] = {}
+    for title in soup.find_all("div", class_="offer-list-title-container"):
+        heading = title.find("h3")
+        link = heading.find("a", href=True) if heading else None
+        if not link:
+            continue
+        href = str(link.get("href") or "")
+        match = re.search(r"/lots/(\d+)/?", href)
+        if not match:
+            continue
+        node_id = int(match.group(1))
+        category = games_by_node.get(node_id)
+        if category is None:
+            continue
+        container = title.parent
+        lots = container.find_all("a", class_="tc-item") if container is not None else []
+        if not lots:
+            continue
+        key = (category.id, node_id)
+        node_name = heading.get_text(" ", strip=True) if heading else ""
+        found[key] = MyLotCategory(
+            game_id=category.id,
+            game_name=category.name,
+            node_id=node_id,
+            node_name=node_name,
+            lot_count=len(lots),
+        )
+    return list(found.values())
 
 
 def parse_chat_contacts(obj: dict[str, Any]) -> list[ChatContact]:

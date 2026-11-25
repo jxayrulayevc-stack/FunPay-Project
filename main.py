@@ -24,7 +24,7 @@ from funpay.autoreply import AutoreplyService
 from funpay.client import FunPayClient
 from funpay.listener import EventListener
 from funpay.mock import MockFunPayClient
-from funpay.models import FunPayEvent
+from funpay.models import FunPayEvent, MyLotCategory
 from funpay.processor import EventProcessor
 from funpay.raiser import AutoRaiser
 
@@ -33,8 +33,43 @@ def parse_args() -> argparse.Namespace:
     """Аргументы командной строки."""
     parser = argparse.ArgumentParser(description="FunPay Helper Bot")
     parser.add_argument("--dry-run", action="store_true", help="демо-режим без действий на FunPay")
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="вместе с --dry-run: прочитать реальный профиль и показать категории без POST",
+    )
     parser.add_argument("--env", type=Path, default=None, help="путь к файлу .env")
     return parser.parse_args()
+
+
+async def inspect_lots(settings: Settings) -> None:
+    """Показывает реальные категории с лотами, не отправляя запросов на поднятие."""
+    masker = SecretMasker()
+    log = setup_logging(settings.log_dir, settings.log_level, masker)
+    db = Database(settings.db_path)
+    await db.connect()
+    client = FunPayClient(settings, db, masker, log)
+    try:
+        await client.start()
+        if client.unauthorized:
+            raise SystemExit("Куки FunPay недействительны — пришлите новые через /cookie")
+        categories = await client.get_my_lot_categories()
+        grouped: dict[tuple[int, str], list[MyLotCategory]] = {}
+        for item in categories:
+            grouped.setdefault((item.game_id, item.game_name), []).append(item)
+        print("DRY-RUN (live): категории для поднятия, POST не отправлялись:")
+        if not grouped:
+            print("  Нет активных лотов для поднятия")
+        for (game_id, game_name), items in grouped.items():
+            nodes = ", ".join(f"{item.node_id} «{item.node_name}» ({item.lot_count} лотов)" for item in items)
+            print(f"  {game_id} {game_name}: {nodes}")
+        print(
+            f"Итого: {len(grouped)} игр, {len(categories)} подкатегорий, "
+            f"{sum(item.lot_count for item in categories)} лотов"
+        )
+    finally:
+        await client.close()
+        await db.close()
 
 
 async def run(settings: Settings) -> None:
@@ -65,7 +100,7 @@ async def run(settings: Settings) -> None:
     await client.start()
 
     autoreply = AutoreplyService(db, client, alerts, log)  # type: ignore[arg-type]
-    raiser = AutoRaiser(db, client, notifier, alerts, settings, log, watchdog)  # type: ignore[arg-type]
+    raiser = AutoRaiser(db, client, notifier, alerts, settings, log, watchdog, dry_run=settings.dry_run)
     events: asyncio.Queue[FunPayEvent] = asyncio.Queue(maxsize=500)
 
     context = BotContext(
@@ -127,6 +162,11 @@ def main() -> None:
     args = parse_args()
     try:
         settings = Settings.load(args.env, dry_run=args.dry_run)
+        if args.live:
+            if not args.dry_run:
+                raise ValueError("--live используется только вместе с --dry-run")
+            asyncio.run(inspect_lots(settings))
+            return
         asyncio.run(run(settings))
     except KeyboardInterrupt:
         pass

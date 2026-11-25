@@ -60,6 +60,8 @@ class Settings:
     log_level: str
     poll_interval: float
     account_refresh_minutes: int
+    lots_refresh_minutes: int
+    funpay_request_delay: float
     heartbeat_interval: int
     watchdog_timeout: int
     funpay_unavailable_after: int
@@ -95,6 +97,8 @@ class Settings:
             log_level=_raw("LOG_LEVEL", "INFO").upper(),
             poll_interval=max(2.0, _get_float("FUNPAY_POLL_INTERVAL", 6.0)),
             account_refresh_minutes=max(5, _get_int("ACCOUNT_REFRESH_MINUTES", 45)),
+            lots_refresh_minutes=max(5, _get_int("LOTS_REFRESH_MINUTES", 30)),
+            funpay_request_delay=min(3.0, max(2.0, _get_float("FUNPAY_REQUEST_DELAY", 2.5))),
             heartbeat_interval=max(10, _get_int("HEARTBEAT_INTERVAL", 60)),
             watchdog_timeout=max(30, _get_int("WATCHDOG_TIMEOUT", 180)),
             funpay_unavailable_after=max(60, _get_int("FUNPAY_UNAVAILABLE_AFTER", 300)),

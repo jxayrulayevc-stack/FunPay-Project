@@ -14,6 +14,8 @@ from typing import Any
 
 import aiosqlite
 
+from funpay.models import MyLotCategory
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
@@ -56,7 +58,24 @@ CREATE TABLE IF NOT EXISTS raise_state (
     last_raise_at REAL,
     next_raise_at REAL,
     last_error    TEXT,
-    error_count   INTEGER NOT NULL DEFAULT 0
+    error_count   INTEGER NOT NULL DEFAULT 0,
+    node_ids      TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS my_lot_categories (
+    game_id    INTEGER NOT NULL,
+    node_id    INTEGER NOT NULL,
+    game_name  TEXT,
+    node_name  TEXT,
+    lot_count  INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (game_id, node_id)
+);
+CREATE TABLE IF NOT EXISTS raise_exclude (
+    kind       TEXT NOT NULL,  -- game | node
+    target_id  INTEGER NOT NULL,
+    name       TEXT,
+    created_at REAL NOT NULL,
+    PRIMARY KEY (kind, target_id)
 );
 """
 
@@ -98,6 +117,13 @@ class Database:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA busy_timeout=5000")
         await self._conn.executescript(SCHEMA)
+        # Миграция старых БД: добавляем колонку, не затрагивая настройки и куки.
+        cursor = await self._conn.execute("PRAGMA table_info(raise_state)")
+        rows = await cursor.fetchall()
+        await cursor.close()
+        columns = {row[1] for row in rows}
+        if "node_ids" not in columns:
+            await self._conn.execute("ALTER TABLE raise_state ADD COLUMN node_ids TEXT NOT NULL DEFAULT ''")
         for key, value in DEFAULT_AUTOREPLY.items():
             await self._conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
         await self._conn.commit()
@@ -261,16 +287,25 @@ class Database:
         next_raise_at: float | None,
         last_error: str | None,
         error_count: int,
+        node_ids: tuple[int, ...] | list[int] = (),
     ) -> None:
         await self._execute(
             "INSERT INTO raise_state(category_id, name, last_raise_at, "
-            "next_raise_at, last_error, error_count) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "next_raise_at, last_error, error_count, node_ids) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(category_id) DO UPDATE SET "
             "name = excluded.name, last_raise_at = excluded.last_raise_at, "
             "next_raise_at = excluded.next_raise_at, last_error = excluded.last_error, "
-            "error_count = excluded.error_count",
-            (str(category_id), name, last_raise_at, next_raise_at, last_error, error_count),
+            "error_count = excluded.error_count, node_ids = excluded.node_ids",
+            (
+                str(category_id),
+                name,
+                last_raise_at,
+                next_raise_at,
+                last_error,
+                error_count,
+                ",".join(str(node_id) for node_id in node_ids),
+            ),
         )
 
     async def get_raise_state(self, category_id: int | str) -> dict[str, Any] | None:
@@ -281,7 +316,88 @@ class Database:
         return [dict(row) for row in await self._fetchall("SELECT * FROM raise_state ORDER BY category_id")]
 
     async def get_next_raise_at(self) -> float | None:
+        """Минимальный кулдаун среди всех записей (для обратной совместимости)."""
         row = await self._fetchone("SELECT MIN(next_raise_at) AS value FROM raise_state")
         if not row or row["value"] is None:
             return None
         return float(row["value"])
+
+    async def get_active_next_raise_at(self) -> float | None:
+        """Ближайшее поднятие только по моим лотеям и без исключённых игр."""
+        row = await self._fetchone(
+            "SELECT MIN(r.next_raise_at) AS value FROM raise_state r "
+            "WHERE CAST(r.category_id AS INTEGER) IN "
+            "(SELECT DISTINCT game_id FROM my_lot_categories) "
+            "AND NOT EXISTS (SELECT 1 FROM raise_exclude e "
+            "WHERE e.kind = 'game' AND e.target_id = CAST(r.category_id AS INTEGER))"
+        )
+        if not row or row["value"] is None:
+            return None
+        return float(row["value"])
+
+    # --- мои лоты и чёрный список поднятия ---------------------------------
+
+    async def replace_my_lot_categories(self, categories: list[MyLotCategory]) -> None:
+        """Атомарно заменяет кэш моих лотов (старые записи исчезают сами)."""
+        now = time.time()
+        rows = [
+            (item.game_id, item.node_id, item.game_name, item.node_name, item.lot_count, now)
+            for item in categories
+        ]
+        async with self._lock:
+            await self.conn.execute("DELETE FROM my_lot_categories")
+            if rows:
+                await self.conn.executemany(
+                    "INSERT INTO my_lot_categories"
+                    "(game_id, node_id, game_name, node_name, lot_count, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    rows,
+                )
+            await self.conn.commit()
+
+    async def my_lot_categories(self) -> list[dict[str, Any]]:
+        rows = await self._fetchall(
+            "SELECT game_id, node_id, game_name, node_name, lot_count, updated_at "
+            "FROM my_lot_categories ORDER BY game_id, node_id"
+        )
+        return [dict(row) for row in rows]
+
+    async def prune_raise_states(self, game_ids: set[int]) -> None:
+        """Удаляет расписание по категориям, где лотов больше нет."""
+        async with self._lock:
+            cursor = await self.conn.execute("SELECT category_id FROM raise_state")
+            rows = await cursor.fetchall()
+            await cursor.close()
+            for row in rows:
+                try:
+                    category_id = int(row[0])
+                except (TypeError, ValueError):
+                    continue
+                if category_id not in game_ids:
+                    await self.conn.execute(
+                        "DELETE FROM raise_state WHERE category_id = ?", (str(category_id),)
+                    )
+            await self.conn.commit()
+
+    async def delete_raise_state(self, category_id: int | str) -> None:
+        await self._execute("DELETE FROM raise_state WHERE category_id = ?", (str(category_id),))
+
+    async def set_exclude(self, kind: str, target_id: int, name: str = "") -> None:
+        if kind not in {"game", "node"}:
+            raise ValueError("Тип исключения должен быть game или node")
+        await self._execute(
+            "INSERT INTO raise_exclude(kind, target_id, name, created_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(kind, target_id) DO UPDATE SET name = excluded.name",
+            (kind, int(target_id), name, time.time()),
+        )
+
+    async def remove_exclude(self, kind: str, target_id: int) -> None:
+        await self._execute(
+            "DELETE FROM raise_exclude WHERE kind = ? AND target_id = ?", (kind, int(target_id))
+        )
+
+    async def excludes(self) -> list[dict[str, Any]]:
+        rows = await self._fetchall(
+            "SELECT kind, target_id, name, created_at FROM raise_exclude ORDER BY kind, target_id"
+        )
+        return [dict(row) for row in rows]

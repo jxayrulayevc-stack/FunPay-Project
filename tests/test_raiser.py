@@ -19,6 +19,7 @@ def test_report_contains_all_categories() -> None:
         RaiseResult(2, False, 7200, 8200, "Подождите 2 часа"),
     ]
     report = AutoRaiser._format_report(results)
-    assert "✅ 1" in report
-    assert "⏳ 2" in report
+    assert "✅ #1" in report
+    assert "⏳ #2" in report
     assert "Подождите 2 часа" in report
+    assert "Поднято: 1" in report

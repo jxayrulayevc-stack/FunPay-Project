@@ -52,6 +52,9 @@ def raise_menu(enabled: bool, report: bool) -> InlineKeyboardMarkup:
     return _markup(
         [
             [_button("⬆️ Поднять сейчас", "raise_now")],
+            [_button("📋 Список категорий", "raise_list")],
+            [_button("🔄 Обновить лоты", "raise_refresh")],
+            [_button("🚫 Исключить ID", "raise_exclude"), _button("✅ Вернуть ID", "raise_include")],
             [_button(f"Автоподнятие: {'вкл' if enabled else 'выкл'}", "raise_toggle")],
             [_button(f"Отчёт в TG: {'вкл' if report else 'выкл'}", "raise_report")],
             [_button("🔙 Назад", "main")],
